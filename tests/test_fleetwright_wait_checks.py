@@ -118,8 +118,17 @@ def test_it_asks_gh_for_the_given_branch_or_the_current_one() -> None:
 
 def test_the_command_on_the_slots_path_runs_this_script() -> None:
     # The units put the kit's bin/ first on PATH; the prompt names the command, not the script.
+    # Executable as git records it, not as the checkout's file system says: Windows has no exec bit.
+    import subprocess
     from pathlib import Path
 
-    wrapper = Path(__file__).resolve().parent.parent / "bin" / "fleetwright-wait-checks"
-    assert wrapper.stat().st_mode & 0o111
+    root = Path(__file__).resolve().parent.parent
+    wrapper = root / "bin" / "fleetwright-wait-checks"
+    staged = subprocess.run(
+        ["git", "-C", str(root), "ls-files", "-s", "bin/fleetwright-wait-checks"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert staged.startswith("100755 ")
     assert "scripts/fleetwright_wait_checks.py" in wrapper.read_text(encoding="utf-8")
