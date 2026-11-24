@@ -1,0 +1,4 @@
+#!/bin/sh
+# fleetwright: an author's one way to wait for its pull request's checks within the wait cap. The units put
+# this directory first on PATH; the script is scripts/fleetwright_wait_checks.py.
+exec uv run --script "$(dirname "$0")/../scripts/fleetwright_wait_checks.py" "$@"

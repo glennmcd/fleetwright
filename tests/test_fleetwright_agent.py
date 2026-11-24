@@ -457,3 +457,44 @@ def test_an_author_reads_the_issue_comments_where_a_handoff_waits() -> None:
     # `gh issue view` without --comments does not show it to the next run.
     assert "`gh issue view 7 --comments`" in fleetwright_agent.issue_prompt(7)
     assert "handoff" in fleetwright_agent.issue_prompt(7).lower()
+
+
+# --- what an author's session holds -------------------------------------------------------------
+
+
+def disallowed(argv: Sequence[str]) -> list[str]:
+    return [a for a in argv if a.startswith("--disallowedTools")]
+
+
+def test_an_author_starts_without_the_tools_it_never_uses(env: dict[str, str]) -> None:
+    # Each tool's definition is re-sent on every call: these cost an author ~6,900 tokens a call.
+    launch = Launch()
+    assert run(env, FakeGit(), launch) == 0
+    assert launch.argv is not None
+    assert disallowed(launch.argv) == [
+        "--disallowedTools=Agent,Workflow,ScheduleWakeup,ReportFindings,ListAgents,Monitor"
+    ]
+
+
+def test_the_disallowed_list_is_one_argument_that_cannot_swallow_the_rest(
+    env: dict[str, str],
+) -> None:
+    launch = Launch()
+    run(env, FakeGit(), launch)
+    assert launch.argv is not None
+    (flag,) = disallowed(launch.argv)
+    assert "=" in flag and " " not in flag
+
+
+def test_a_reviewer_keeps_every_tool(review_env: dict[str, str]) -> None:
+    # review-pr runs the code-reviewer sub-agent and reports its findings.
+    launch = Launch()
+    assert run(review_env, FakeGit(), launch, whoami("g26work")) == 0
+    assert launch.argv is not None
+    assert disallowed(launch.argv) == []
+
+
+def test_an_author_is_told_how_to_wait_for_its_checks() -> None:
+    for make in (fleetwright_agent.issue_prompt, fleetwright_agent.fix_prompt):
+        assert "`fleetwright-wait-checks`" in make(7)
+    assert "fleetwright-wait-checks" not in fleetwright_agent.review_prompt(7)

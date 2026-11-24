@@ -23,7 +23,8 @@ The units (``fleetwright-agent@.service`` and ``fleetwright-review@.service``, f
    brought up to the pushed one; the pushed one if another slot started it; else a new one from
    ``origin/main``) with ``origin``'s ``issue/<n>`` as its upstream, since the agent's sandbox keeps
    ``.git/config`` read-only; a reviewer on the pull request's head commit, detached;
-7. starts ``claude -p`` (with ``--model`` when ``FLEETWRIGHT_MODEL`` is set) with its events streamed, through ``scripts/fleetwright_stream.py``, which prints one line
+7. starts ``claude -p`` (with ``--model`` when ``FLEETWRIGHT_MODEL`` is set, and for an author without the
+   tools in ``AUTHOR_DISALLOWED_TOOLS``) with its events streamed, through ``scripts/fleetwright_stream.py``, which prints one line
    per step to the journal and exits with the agent's exit code.
 
 Each prompt is fixed apart from a number that is checked to be a number, so nothing from the assignment
@@ -58,6 +59,26 @@ ASSIGNMENT_RE = re.compile(r"(issue|fix|review) ([1-9][0-9]{0,8})")
 # A model id or alias, such as claude-opus-5-5, opus or claude-opus-5-5[1m]. Never an option.
 MODEL_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._\[\]-]{0,99}")
 
+# Tools an author never uses, kept out of its session: each tool's definition is re-sent on every call,
+# and the first five cost about 6,900 tokens a call (five author transcripts, 2026-11-23). Agent,
+# Workflow and ListAgents are for a session that coordinates others, ReportFindings is the reviewer's,
+# and ScheduleWakeup and Monitor were what authors reached for to wait on CI, which
+# `fleetwright-wait-checks` now does. A reviewer keeps them all: review-pr runs a sub-agent.
+AUTHOR_DISALLOWED_TOOLS = (
+    "Agent",
+    "Workflow",
+    "ScheduleWakeup",
+    "ReportFindings",
+    "ListAgents",
+    "Monitor",
+)
+
+# Fixed text, added to an author's prompt: one way to wait for CI that ends within the wait cap.
+WAIT_NOTE = (
+    " To wait for the checks, run `fleetwright-wait-checks` in the foreground: it waits up to 100 s and "
+    "prints one line per failing check, or one line when they pass; run it again while it says pending."
+)
+
 Git = Callable[[Sequence[str]], tuple[int, str]]
 Launch = Callable[[Sequence[str]], int]
 WhoAmI = Callable[[], str | None]
@@ -72,28 +93,36 @@ RESUME_NOTE = (
 
 def issue_prompt(issue: int, resumed: bool = False) -> str:
     return (
-        f"Work on GitHub issue #{issue} of this repository. Read it with `gh issue view {issue} --comments`; "
-        "if an earlier run on it posted a handoff comment, carry on from the latest one. "
-        "Its Done when list is your approval and your definition of finished. "
-        f"You are on the branch issue/{issue}; commit there, push it with a plain `git push` (its "
-        "upstream is already set), and open a pull request that "
-        "closes the issue, or continue the one that is open. "
-        "Stop when every check except `reviewer-verdict` passes, or write a handoff if you cannot "
-        "finish. `reviewer-verdict` stays red until the fleet's reviewer posts its verdict: that is "
-        "not yours to pass. Do not post review verdicts and do not run the review-pr skill."
-    ) + (RESUME_NOTE if resumed else "")
+        (
+            f"Work on GitHub issue #{issue} of this repository. Read it with `gh issue view {issue} --comments`; "
+            "if an earlier run on it posted a handoff comment, carry on from the latest one. "
+            "Its Done when list is your approval and your definition of finished. "
+            f"You are on the branch issue/{issue}; commit there, push it with a plain `git push` (its "
+            "upstream is already set), and open a pull request that "
+            "closes the issue, or continue the one that is open. "
+            "Stop when every check except `reviewer-verdict` passes, or write a handoff if you cannot "
+            "finish. `reviewer-verdict` stays red until the fleet's reviewer posts its verdict: that is "
+            "not yours to pass. Do not post review verdicts and do not run the review-pr skill."
+        )
+        + WAIT_NOTE
+        + (RESUME_NOTE if resumed else "")
+    )
 
 
 def fix_prompt(issue: int, resumed: bool = False) -> str:
     return (
-        f"The pull request from the branch issue/{issue}, for GitHub issue #{issue}, needs a fix round: "
-        "its checks fail, it conflicts with main, or the reviewer requested changes. You are on that "
-        f"branch. Read `gh pr view issue/{issue} --comments` and `gh pr checks issue/{issue}`, and the "
-        "issue's Done when list. Fix what they report, merge main if it conflicts, and push to the same "
-        "branch. Stop when every check except `reviewer-verdict` passes, or write a handoff if you "
-        "cannot finish. `reviewer-verdict` stays red until the fleet's reviewer posts its verdict: that "
-        "is not yours to pass. Do not post review verdicts and do not run the review-pr skill."
-    ) + (RESUME_NOTE if resumed else "")
+        (
+            f"The pull request from the branch issue/{issue}, for GitHub issue #{issue}, needs a fix round: "
+            "its checks fail, it conflicts with main, or the reviewer requested changes. You are on that "
+            f"branch. Read `gh pr view issue/{issue} --comments` and `gh pr checks issue/{issue}`, and the "
+            "issue's Done when list. Fix what they report, merge main if it conflicts, and push to the same "
+            "branch. Stop when every check except `reviewer-verdict` passes, or write a handoff if you "
+            "cannot finish. `reviewer-verdict` stays red until the fleet's reviewer posts its verdict: that "
+            "is not yours to pass. Do not post review verdicts and do not run the review-pr skill."
+        )
+        + WAIT_NOTE
+        + (RESUME_NOTE if resumed else "")
+    )
 
 
 def review_prompt(pr: int) -> str:
@@ -285,6 +314,12 @@ def run(env: Mapping[str, str], git: Git, launch: Launch, whoami: WhoAmI = _gh_l
             "--verbose",
             # The role's template unit may set it in a drop-in; unset, Claude Code picks its default.
             *(["--model", model] if model else []),
+            # One `=` argument: the option takes a list, and a separate value could swallow what follows.
+            *(
+                [f"--disallowedTools={','.join(AUTHOR_DISALLOWED_TOOLS)}"]
+                if role == "author"
+                else []
+            ),
         ]
     )
 

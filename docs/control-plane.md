@@ -338,6 +338,16 @@ main session, which the context ceiling and the wait cap skip otherwise. With th
 tokens of context is told to hand off at its next commit, past 200k only `git` and `gh` run, and it may not
 wait in the foreground past 270 s. Review slots set neither.
 
+An author also starts without the tools it never uses: `Agent`, `Workflow`, `ScheduleWakeup`, `ReportFindings`,
+`ListAgents` and `Monitor` (`AUTHOR_DISALLOWED_TOOLS` in `fleetwright_agent.py`). Every tool's definition is
+re-sent on every model call. In five author transcripts from 2026-11-23, the first five tools were about 6,900
+of the 23,270 tokens the first call held before any work, and `Monitor`, loaded mid-session to watch CI, added
+about 3,250 more. To wait for its checks, the author's prompt names `fleetwright-wait-checks`
+([`bin/`](../bin/fleetwright-wait-checks), [`fleetwright_wait_checks.py`](../scripts/fleetwright_wait_checks.py)):
+one foreground call of at most 100 s (never past 240 s) that prints one `FAIL <check> <link>` line per failing
+check, one `ok` line, or `pending` with the checks still running. `reviewer-verdict` is not counted. A reviewer
+keeps every tool, since `review-pr` runs a sub-agent and reports findings.
+
 ### Watching an agent
 
 The agent's events are streamed ([`fleetwright_stream.py`](../scripts/fleetwright_stream.py)), one short line per step, so
